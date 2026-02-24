@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RAC DNX — Finance Portal (Dark Premium)</title>
+
+  <!-- Google fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CDN (Play) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- React + ReactDOM + Babel (for quick prototype) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #07070a;
+      --panel: rgba(255,255,255,0.04);
+      --glass: rgba(255,255,255,0.03);
+      --accent1: #7c3aed; /* indigo */
+      --accent2: #06b6d4; /* cyan */
+      --muted: #9ca3af;
+    }
+    html,body,#root { height:100%; background: linear-gradient(180deg, #030313 0%, #071026 60%); }
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; -webkit-font-smoothing:antialiased; color:#e6eef8; }
+    .soft-glow { box-shadow: 0 8px 40px rgba(124,58,237,0.14); }
+    .glass { background: var(--glass); border: 1px solid rgba(255,255,255,0.04); backdrop-filter: blur(10px); }
+    .muted { color: var(--muted); }
+    .reveal { opacity: 0; transform: translateY(20px); transition: all .7s cubic-bezier(.2,.9,.2,1); }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    /* input focus */
+    input:focus, textarea:focus { outline: none; box-shadow: 0 6px 30px rgba(6,182,212,.06), 0 1px 0 rgba(124,58,237,.06) inset; border-color: rgba(124,58,237,.25); }
+    /* file label */
+    .file-drop { border:2px dashed rgba(255,255,255,0.06); }
+    /* small screens adjustments */
+    @media (max-width: 640px) {
+      .hero-3d { display:none; } /* hide heavy canvas on tiny screens */
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <!-- React app -->
+  <script type="text/babel">
+
+  const { useState, useEffect, useRef } = React;
+
+  /******************
+   * CONFIG
+   ******************/
+  const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJ3c3LC_tecRGrgPx5R3IdpLXF0pdAH3y87Nih0qYUeVxSK88fp_PXi9AxxXiAvY5bxQ/exec";
+
+    /******************
+     * SAFE FETCH (Production Safe)
+     ******************/
+    async function safeFetch(url, options = {}, timeout = 60000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+
+    const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+    });
+
+    clearTimeout(id);
+
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error("Invalid server response");
+    }
+    }
+  /******************
+   * Utilities
+   ******************/
+  function classNames(...c){return c.filter(Boolean).join(" ");}
+
+  function useRevealOnScroll() {
+    useEffect(() => {
+      const obs = new IntersectionObserver((entries) => {
+        entries.forEach(ent => {
+          if(ent.isIntersecting) ent.target.classList.add("visible");
+        });
+      }, { threshold: 0.12 });
+
+      document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+      return () => obs.disconnect();
+    }, []);
+  }
+
+  /******************
+   * 3D Canvas Component (subtle, lightweight)
+   ******************/
+  function ThreeHero() {
+    const canvasRef = useRef(null);
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+      camera.position.z = 4;
+
+      const geom = new THREE.TorusKnotGeometry(0.8, 0.22, 140, 20);
+      const mat = new THREE.MeshPhysicalMaterial({ color: 0x8b5cf6, metalness:0.3, roughness:0.2, clearcoat:0.6, clearcoatRoughness:0.1 });
+      const mesh = new THREE.Mesh(geom, mat);
+      scene.add(mesh);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1.1);
+      light.position.set(5,5,5);
+      scene.add(light);
+      const amb = new THREE.AmbientLight(0xffffff, 0.25);
+      scene.add(amb);
+
+      let raf;
+      function onResize() {
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w/h;
+        camera.updateProjectionMatrix();
+      }
+      window.addEventListener('resize', onResize);
+
+      function animate(t){
+        raf = requestAnimationFrame(animate);
+        mesh.rotation.x += 0.0025;
+        mesh.rotation.y += 0.0035;
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); renderer.dispose(); };
+    }, []);
+    return <canvas ref={canvasRef} style={{width:'100%', height:'100%'}} />;
+  }
+
+  /******************
+   * Hero
+   ******************/
+  function Hero({onScrollToForm}) {
+    return (
+      <header className="relative overflow-hidden">
+        <div className="absolute inset-0">
+          <img src="https://images.unsplash.com/photo-1526378720234-26bf4f4b8576?auto=format&fit=crop&w=1600&q=80" alt="finance background" className="w-full h-full object-cover opacity-20" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/10 to-black/40"></div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-6 py-28 relative z-10 flex items-center gap-12">
+          <div style={{flex:1}}>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gradient-to-r from-purple-700 to-teal-400 text-xs font-semibold soft-glow mb-6">
+              <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-90"><path fill="white" d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
+              Institutional Finance
+            </div>
+
+            <h1 className="text-4xl md:text-5xl font-bold leading-tight" style={{fontFamily:'Poppins, Inter'}}>
+              RAC DNX — Accounts & Reimbursements
+            </h1>
+
+            <p className="mt-4 text-gray-300 max-w-2xl">
+              A premium, audit-ready reimbursement portal — submit approvals, get receipts, and track status instantly. Built for transparency and modern governance.
+            </p>
+
+            <div className="mt-8 flex gap-3">
+              <button onClick={onScrollToForm} className="px-6 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-teal-400 text-black font-semibold shadow-lg transform active:scale-95">
+                Submit Reimbursement
+              </button>
+              <a href="#track" className="px-4 py-3 rounded-lg border border-white/6 text-sm muted">Track a receipt</a>
+            </div>
+
+            <div className="mt-8 flex gap-6 items-center">
+              <div className="text-sm">
+                <div className="text-xs muted">Trusted by</div>
+                <div className="font-semibold mt-1">Rotaract Club of Delhi Nexus</div>
+              </div>
+              <div className="h-12 w-px bg-white/6" />
+              <div className="text-sm muted">Avg. approval time <strong className="text-white">12–24 hrs</strong></div>
+            </div>
+          </div>
+
+          <div className="w-96 h-72 rounded-2xl glass p-3 soft-glow hero-3d">
+            <ThreeHero />
+          </div>
+        </div>
+      </header>
+    );
+  }
+
+  /******************
+   * Feature + Content sections
+   ******************/
+  function Features() {
+    useRevealOnScroll();
+    return (
+      <section className="max-w-6xl mx-auto px-6 py-12">
+        <div className="grid md:grid-cols-3 gap-6">
+          <Card title="Transparent Ledger" img="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c">
+            All transactions are logged with timestamps, receipts and approval proofs — audit-ready.
+          </Card>
+          <Card title="Compliance-first" img="https://images.unsplash.com/photo-1542744173-8e7e53415bb0">
+            Mandatory GST bills and BoD approval PDFs ensure strict adherence to policy.
+          </Card>
+          <Card title="Instant Receipts" img="https://images.unsplash.com/photo-1498050108023-c5249f4df085">
+            Generate downloadable PDF receipts and store them securely in Drive.
+          </Card>
+        </div>
+      </section>
+    );
+  }
+
+  function Card({title, children, img}) {
+    return (
+      <div className="glass p-6 rounded-2xl shadow-md reveal">
+        <img src={img+"?auto=format&fit=crop&w=600&q=60"} alt="" className="w-full h-36 object-cover rounded-lg mb-4"/>
+        <h4 className="font-semibold text-white mb-2">{title}</h4>
+        <p className="muted">{children}</p>
+      </div>
+    );
+  }
+
+  /******************
+   * Animated stats
+   ******************/
+  function Stats() {
+    useRevealOnScroll();
+    const [counts, setCounts] = useState({reimbursed: 250000, processed: 1200, trans: 100});
+    const refs = {r:useRef(), p:useRef(), t:useRef()};
+    useEffect(() => {
+      const animate = (ref, target) => {
+        if(!ref.current) return;
+        let current = 0;
+        const step = Math.max(1, Math.floor(target / 80));
+        const id = setInterval(() => {
+          current += step;
+          if(current >= target){ ref.current.innerText = target.toLocaleString(); clearInterval(id); }
+          else ref.current.innerText = current.toLocaleString();
+        }, 16);
+      };
+      animate(refs.r, counts.reimbursed);
+      animate(refs.p, counts.processed);
+      animate(refs.t, counts.trans);
+    }, []);
+    return (
+      <section className="max-w-6xl mx-auto px-6 py-12">
+        <div className="grid md:grid-cols-3 gap-6 text-center">
+          <div className="glass p-6 rounded-2xl reveal">
+            <div className="text-3xl font-bold text-indigo-400" ref={refs.r}>0</div>
+            <div className="muted mt-2">₹ Reimbursed</div>
+          </div>
+          <div className="glass p-6 rounded-2xl reveal">
+            <div className="text-3xl font-bold text-teal-300" ref={refs.p}>0</div>
+            <div className="muted mt-2">Requests Processed</div>
+          </div>
+          <div className="glass p-6 rounded-2xl reveal">
+            <div className="text-3xl font-bold text-green-300" ref={refs.t}>0</div>
+            <div className="muted mt-2">Transparency Score</div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  /******************
+   * Reimbursement form component
+   ******************/
+  function ReimbursementForm() {
+    useRevealOnScroll();
+    const [loading, setLoading] = useState(false);
+    const [success, setSuccess] = useState(null);
+    const [error, setError] = useState(null);
+    const fileRef = useRef();
+
+    async function handleSubmit(e){
+  e.preventDefault();
+  setError(null);
+  setSuccess(null);
+
+  const fd = new FormData(e.target);
+  const data = Object.fromEntries(fd.entries());
+
+  if(!data.email || !data.email.endsWith("@rotaractdelhi.in")){
+    setError("Please use your @rotaractdelhi.in email.");
+    return;
+  }
+
+  const file = fileRef.current.files[0];
+  if(!file){ setError("Please upload approval PDF."); return; }
+  if(file.type !== "application/pdf"){ setError("Only PDF approval emails accepted."); return; }
+  if(file.size > 6 * 1024 * 1024){ setError("PDF too large (max 6MB)."); return; }
+
+  setLoading(true);
+
+  try {
+    const base64 = await readFileAsBase64(file);
+
+    const payload = {
+      fullName: data.fullName,
+      email: data.email,
+      eventName: data.eventName,
+      amount: data.amount,
+      bodEmail: data.bodEmail,
+      upiId: data.upiId,
+      approvalPdf: base64.split(",")[1],
+      fileName: file.name
+    };
+
+    const json = await safeFetch(GOOGLE_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    });
+
+    if(json.success){
+      setResult({ success: true, ...json.data });
+      e.target.reset();
+    } else {
+      setError(json.message || "Submission failed");
+    }
+
+  } catch(err){
+    setError(err.message || "Server error");
+  }
+
+  setLoading(false);
+}
+
+    return (
+      <div className="max-w-2xl mx-auto reveal">
+        <form onSubmit={handleSubmit} className="bg-gradient-to-br from-black/30 to-black/10 border border-white/5 glass p-8 rounded-2xl shadow-xl">
+          <div className="grid md:grid-cols-2 gap-4">
+            <label className="block">
+              <div className="text-sm muted mb-1">Full name</div>
+              <input name="fullName" required className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+            <label className="block">
+              <div className="text-sm muted mb-1">Official Email</div>
+              <input name="email" required placeholder="you@rotaractdelhi.in" className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+
+            <label className="block">
+              <div className="text-sm muted mb-1">Event name</div>
+              <input name="eventName" required className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+            <label className="block">
+              <div className="text-sm muted mb-1">Amount (₹)</div>
+              <input name="amount" required type="number" className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+
+            <label className="block">
+              <div className="text-sm muted mb-1">BoD Approver Email</div>
+              <input name="bodEmail" required placeholder="approver@rotaractdelhi.in" className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+            <label className="block">
+              <div className="text-sm muted mb-1">UPI ID</div>
+              <input name="upiId" required placeholder="yourupi@bank" className="w-full p-3 rounded bg-transparent border border-white/6" />
+            </label>
+          </div>
+
+          <div className="mt-4">
+            <div className="text-sm muted mb-2">Upload approval email (PDF) — mandatory</div>
+            <label className="file-drop flex items-center gap-3 p-3 rounded border border-white/6">
+              <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-90"><path fill="white" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              <div className="text-sm muted">Drag & drop or <span className="text-indigo-400 underline">browse</span></div>
+              <input type="file" ref={fileRef} id="approvalPdf" accept="application/pdf" className="ml-auto" />
+            </label>
+          </div>
+
+          {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
+
+          <div className="mt-6 flex items-center justify-between">
+            <div className="text-sm muted">We save proof & receipt to Drive (owner only). 7-day claim window enforced.</div>
+            <button type="submit" disabled={loading} className="px-5 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-teal-400 font-semibold text-black">
+              {loading ? "Submitting..." : "Submit Request"}
+            </button>
+          </div>
+        </form>
+
+        {success && (
+          <div className="mt-4 p-4 bg-green-900/40 border border-green-500 rounded">
+            <div className="font-semibold">Submitted ✓</div>
+            <div className="muted mt-1">Receipt ID: <strong className="text-white">{success.receiptId}</strong></div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function readFileAsBase64(file){
+    return new Promise((resolve, reject)=>{
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
+  }
+
+  /******************
+   * Status tracker
+   ******************/
+  function Tracker() {
+    const [id, setId] = useState('');
+    const [result, setResult] = useState(null);
+    const [loading, setLoading] = useState(false);
+    async function check(){
+  if(!id) return;
+
+  setLoading(true);
+  setResult(null);
+
+  try{
+    const response = await fetch(
+      GOOGLE_SCRIPT_URL + "?action=track&receiptId=" + encodeURIComponent(id),
+      { method: "GET" }
+    );
+
+    const text = await response.text();
+
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch(e){
+      console.error("Invalid JSON:", text);
+      throw new Error("Invalid server response");
+    }
+
+    if(json.success){
+      setResult({ success: true, ...json.data });
+    } else {
+      setResult({ success: false });
+    }
+
+  } catch(err){
+    console.error("Tracker error:", err);
+    setResult({ success: false });
+  }
+
+  setLoading(false);
+}
+    return (
+      <div className="max-w-2xl mx-auto reveal">
+        <div className="glass p-6 rounded-2xl">
+          <div className="flex gap-3">
+            <input value={id} onChange={(e)=>setId(e.target.value)} placeholder="RAC-DNX-ACC-2026-0001" className="flex-1 p-3 rounded bg-transparent border border-white/6 text-white" />
+            <button onClick={check} className="px-4 py-2 bg-indigo-600 rounded">Check</button>
+          </div>
+          <div className="mt-4">
+            {loading && <div className="muted">Checking…</div>}
+            {result && result.success === false && (
+            <div className="text-red-400">Not found</div>
+            )}
+            {result && result.success && (
+              <div>
+                <div className="text-sm muted">
+                Status: 
+                <span className={
+                    result.status === "Approved"
+                    ? "text-green-400 font-semibold"
+                    : result.status === "Rejected"
+                    ? "text-red-400 font-semibold"
+                    : "text-yellow-400 font-semibold"
+                }>
+                    {result.status}
+                </span>
+                </div>
+                <div className="text-sm muted">Event: {result.event}</div>
+                <div className="text-sm muted">Amount: ₹{result.amount}</div>
+                <div className="mt-2"><a href={result.receiptUrl} target="_blank" className="underline text-indigo-300">Open Receipt</a></div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /******************
+   * Footer with expanded content
+   ******************/
+  function Footer(){
+    useRevealOnScroll();
+    return (
+      <footer className="mt-12 py-12 reveal">
+        <div className="max-w-6xl mx-auto px-6 grid md:grid-cols-3 gap-8">
+          <div>
+            <h4 className="font-semibold text-white">RAC Delhi Nexus</h4>
+            <p className="muted mt-3">We serve communities and build leaders — financial governance is core to our trustworthiness.</p>
+          </div>
+          <div>
+            <h5 className="font-semibold text-white">Resources</h5>
+            <ul className="mt-3 muted space-y-2 text-sm">
+              <li>Reimbursement Policy</li>
+              <li>Accounts Handbook</li>
+              <li>Audits & Reports</li>
+            </ul>
+          </div>
+          <div>
+            <h5 className="font-semibold text-white">Contact</h5>
+            <div className="muted mt-3 text-sm">finance@rotaractdelhi.in</div>
+            <div className="muted mt-2 text-sm">© 2026 Rotaract Club of Delhi Nexus</div>
+          </div>
+        </div>
+      </footer>
+    );
+  }
+
+  /******************
+   * Main App
+   ******************/
+  function App(){
+    const scrollToForm = () => {
+      const el = document.querySelector('form');
+      if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+    };
+    useEffect(()=>{ revealOnLoad(); }, []);
+
+    function revealOnLoad() {
+      document.querySelectorAll('.reveal').forEach((el, idx) => {
+        setTimeout(()=>el.classList.add('visible'), idx*120 + 200);
+      });
+    }
+
+    return (
+      <div>
+        <Hero onScrollToForm={scrollToForm} />
+        <main>
+          <Features />
+          <Stats />
+          <section className="max-w-7xl mx-auto px-6 py-8">
+            <h3 className="text-2xl font-semibold mb-4 reveal">How it works</h3>
+            <div className="grid md:grid-cols-3 gap-6 mb-8 reveal">
+              <Step title="Get Pre-Approval" desc="Obtain BoD approval via email. Save the approval email as PDF." />
+              <Step title="Submit Request" desc="Fill the form, attach approval PDF, and submit within 7 days." />
+              <Step title="Receive Receipt" desc="System generates receipt PDF, stores it, and notifies stakeholders." />
+            </div>
+          </section>
+
+          <section id="form-area" className="px-6 py-8">
+            <h3 className="text-2xl font-semibold mb-4 reveal">Reimbursement</h3>
+            <ReimbursementForm />
+          </section>
+
+          <section className="px-6 py-8">
+            <h3 className="text-2xl font-semibold mb-4 reveal">Track</h3>
+            <Tracker />
+          </section>
+
+          <Footer />
+        </main>
+      </div>
+    );
+  }
+
+  function Step({title, desc}) {
+    return (
+      <div className="glass p-6 rounded-2xl reveal">
+        <div className="text-indigo-400 font-bold mb-2">{title}</div>
+        <div className="muted">{desc}</div>
+      </div>
+    );
+  }
+
+  /******************
+   * mount
+   ******************/
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+  </script>
+
+</body>
+</html>
