@@ -312,7 +312,8 @@
       bodEmail: data.bodEmail,
       upiId: data.upiId,
       approvalPdf: base64.split(",")[1],
-      fileName: file.name
+      fileName: file.name,
+      ccEmails: [data.email, data.bodEmail]   // CC: applicant + BoD approver
     };
 
     const json = await safeFetch(GOOGLE_SCRIPT_URL, {
@@ -322,7 +323,7 @@
     });
 
     if(json.success){
-      setResult({ success: true, ...json.data });
+      setSuccess(json.data);
       e.target.reset();
     } else {
       setError(json.message || "Submission failed");
@@ -406,76 +407,216 @@
   }
 
   /******************
-   * Status tracker
+   * Status tracker + Approve / Reject panel
    ******************/
   function Tracker() {
     const [id, setId] = useState('');
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [actionLoading, setActionLoading] = useState(null); // 'approve' | 'reject'
+    const [actionDone, setActionDone] = useState(null);
+    const [rejectReason, setRejectReason] = useState('');
+    const [showRejectBox, setShowRejectBox] = useState(false);
+
     async function check(){
-  if(!id) return;
-
-  setLoading(true);
-  setResult(null);
-
-  try{
-    const response = await fetch(
-      GOOGLE_SCRIPT_URL + "?action=track&receiptId=" + encodeURIComponent(id),
-      { method: "GET" }
-    );
-
-    const text = await response.text();
-
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch(e){
-      console.error("Invalid JSON:", text);
-      throw new Error("Invalid server response");
+      if(!id) return;
+      setLoading(true);
+      setResult(null);
+      setActionDone(null);
+      setShowRejectBox(false);
+      try{
+        const response = await fetch(
+          GOOGLE_SCRIPT_URL + "?action=track&receiptId=" + encodeURIComponent(id),
+          { method: "GET" }
+        );
+        const text = await response.text();
+        let json;
+        try { json = JSON.parse(text); }
+        catch(e){ throw new Error("Invalid server response"); }
+        if(json.success){ setResult({ success: true, ...json.data }); }
+        else { setResult({ success: false }); }
+      } catch(err){
+        console.error("Tracker error:", err);
+        setResult({ success: false });
+      }
+      setLoading(false);
     }
 
-    if(json.success){
-      setResult({ success: true, ...json.data });
-    } else {
-      setResult({ success: false });
+    async function handleAction(action) {
+      if(action === 'reject' && !showRejectBox){ setShowRejectBox(true); return; }
+      setActionLoading(action);
+      try {
+        const payload = { action, receiptId: id };
+        if(action === 'reject') payload.reason = rejectReason || "No reason provided";
+        const json = await safeFetch(GOOGLE_SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(payload)
+        });
+        if(json.success){
+          setActionDone(action);
+          setResult(prev => ({ ...prev, status: action === 'approve' ? 'Approved' : 'Rejected' }));
+        } else {
+          alert(json.message || "Action failed");
+        }
+      } catch(err){
+        alert(err.message || "Server error");
+      }
+      setActionLoading(null);
     }
 
-  } catch(err){
-    console.error("Tracker error:", err);
-    setResult({ success: false });
-  }
+    const statusColor = (s) =>
+      s === "Approved" ? "text-green-400" : s === "Rejected" ? "text-red-400" : "text-yellow-400";
 
-  setLoading(false);
-}
+    const statusBg = (s) =>
+      s === "Approved" ? "bg-green-900/30 border-green-500/40" : s === "Rejected" ? "bg-red-900/30 border-red-500/40" : "bg-yellow-900/20 border-yellow-500/30";
+
     return (
       <div className="max-w-2xl mx-auto reveal">
         <div className="glass p-6 rounded-2xl">
+
+          {/* Search bar */}
           <div className="flex gap-3">
-            <input value={id} onChange={(e)=>setId(e.target.value)} placeholder="RAC-DNX-ACC-2026-0001" className="flex-1 p-3 rounded bg-transparent border border-white/6 text-white" />
-            <button onClick={check} className="px-4 py-2 bg-indigo-600 rounded">Check</button>
+            <input
+              value={id}
+              onChange={(e)=>setId(e.target.value)}
+              onKeyDown={(e)=>e.key==='Enter' && check()}
+              placeholder="RAC-DNX-ACC-2026-0001"
+              className="flex-1 p-3 rounded bg-transparent border border-white/10 text-white placeholder-gray-600 focus:border-indigo-500 transition"
+            />
+            <button
+              onClick={check}
+              disabled={loading}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded font-semibold transition disabled:opacity-50"
+            >
+              {loading ? "..." : "Check"}
+            </button>
           </div>
-          <div className="mt-4">
-            {loading && <div className="muted">Checking…</div>}
-            {result && result.success === false && (
-            <div className="text-red-400">Not found</div>
+
+          {/* Results */}
+          <div className="mt-5">
+            {loading && (
+              <div className="flex items-center gap-2 muted text-sm">
+                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"/>
+                Checking…
+              </div>
             )}
+
+            {result && result.success === false && (
+              <div className="flex items-center gap-2 text-red-400 text-sm">
+                <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                Receipt ID not found. Please check and try again.
+              </div>
+            )}
+
             {result && result.success && (
-              <div>
-                <div className="text-sm muted">
-                Status: 
-                <span className={
-                    result.status === "Approved"
-                    ? "text-green-400 font-semibold"
-                    : result.status === "Rejected"
-                    ? "text-red-400 font-semibold"
-                    : "text-yellow-400 font-semibold"
-                }>
-                    {result.status}
-                </span>
+              <div className="space-y-4">
+
+                {/* Status badge */}
+                <div className={`flex items-center justify-between p-4 rounded-xl border ${statusBg(result.status)}`}>
+                  <div>
+                    <div className="text-xs muted mb-1">Current Status</div>
+                    <div className={`text-lg font-bold ${statusColor(result.status)}`}>{result.status}</div>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${result.status==='Approved'?'bg-green-400':result.status==='Rejected'?'bg-red-400':'bg-yellow-400'} shadow-lg`}
+                    style={{boxShadow: result.status==='Approved'?'0 0 10px #4ade80':result.status==='Rejected'?'0 0 10px #f87171':'0 0 10px #facc15'}}
+                  />
                 </div>
-                <div className="text-sm muted">Event: {result.event}</div>
-                <div className="text-sm muted">Amount: ₹{result.amount}</div>
-                <div className="mt-2"><a href={result.receiptUrl} target="_blank" className="underline text-indigo-300">Open Receipt</a></div>
+
+                {/* Details grid */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="glass p-3 rounded-lg">
+                    <div className="text-xs muted mb-1">Event</div>
+                    <div className="text-white font-medium">{result.event || "—"}</div>
+                  </div>
+                  <div className="glass p-3 rounded-lg">
+                    <div className="text-xs muted mb-1">Amount</div>
+                    <div className="text-white font-medium">₹{result.amount || "—"}</div>
+                  </div>
+                  {result.applicant && (
+                    <div className="glass p-3 rounded-lg">
+                      <div className="text-xs muted mb-1">Applicant</div>
+                      <div className="text-white font-medium">{result.applicant}</div>
+                    </div>
+                  )}
+                  {result.submittedOn && (
+                    <div className="glass p-3 rounded-lg">
+                      <div className="text-xs muted mb-1">Submitted On</div>
+                      <div className="text-white font-medium">{result.submittedOn}</div>
+                    </div>
+                  )}
+                </div>
+
+                {result.receiptUrl && (
+                  <a href={result.receiptUrl} target="_blank"
+                    className="flex items-center gap-2 text-sm text-indigo-300 hover:text-indigo-200 underline underline-offset-2 transition">
+                    <svg width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+                    Open Receipt PDF
+                  </a>
+                )}
+
+                {/* Approve / Reject actions — only show if still pending */}
+                {result.status === "Pending" && !actionDone && (
+                  <div className="pt-2 border-t border-white/5">
+                    <div className="text-xs muted mb-3">Finance Team Actions</div>
+
+                    {!showRejectBox ? (
+                      <div className="flex gap-3">
+                        <button
+                          onClick={()=>handleAction('approve')}
+                          disabled={!!actionLoading}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-700/70 hover:bg-green-600 border border-green-500/40 font-semibold text-white transition disabled:opacity-50"
+                        >
+                          {actionLoading==='approve' ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> : <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+                          Approve
+                        </button>
+                        <button
+                          onClick={()=>handleAction('reject')}
+                          disabled={!!actionLoading}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-800/60 hover:bg-red-700 border border-red-500/40 font-semibold text-white transition disabled:opacity-50"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <textarea
+                          value={rejectReason}
+                          onChange={e=>setRejectReason(e.target.value)}
+                          placeholder="Reason for rejection (optional but recommended)…"
+                          rows={3}
+                          className="w-full p-3 rounded-lg bg-transparent border border-red-500/30 text-sm text-white resize-none focus:border-red-400 transition"
+                        />
+                        <div className="flex gap-3">
+                          <button
+                            onClick={()=>handleAction('reject')}
+                            disabled={!!actionLoading}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-700/70 hover:bg-red-600 border border-red-500/40 font-semibold text-white text-sm transition disabled:opacity-50"
+                          >
+                            {actionLoading==='reject' ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> : null}
+                            Confirm Reject
+                          </button>
+                          <button
+                            onClick={()=>setShowRejectBox(false)}
+                            className="px-4 py-2 rounded-lg border border-white/10 text-sm muted hover:border-white/20 transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Action done confirmation */}
+                {actionDone && (
+                  <div className={`flex items-center gap-2 p-3 rounded-lg text-sm font-medium ${actionDone==='approve'?'bg-green-900/40 text-green-300':'bg-red-900/40 text-red-300'}`}>
+                    <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                    {actionDone==='approve' ? "Request approved! Applicant & BoD have been notified." : "Request rejected. Applicant & BoD have been notified."}
+                  </div>
+                )}
+
               </div>
             )}
           </div>
